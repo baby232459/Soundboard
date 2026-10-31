@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>BeepBox – Instant Sound Buttons</title>
+<style>
+:root{box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);
+--bg:#f6f5fb;--surface:#fff;--text:#1c1b29;--muted:#6b6a80;--border:#e2e0ef;--accent:#6c4cf5;--accent-text:#fff}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#13121c;--surface:#1d1c2b;--text:#f1f0fa;--muted:#9a99b3;--border:#2d2c42;--accent:#8b72ff;--accent-text:#13121c}}
+:root[data-theme="dark"]{--bg:#13121c;--surface:#1d1c2b;--text:#f1f0fa;--muted:#9a99b3;--border:#2d2c42;--accent:#8b72ff;--accent-text:#13121c}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+*,*:before,*:after{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+header{position:sticky;top:env(safe-area-inset-top,0px);z-index:5;background:var(--bg);border-bottom:1px solid var(--border);padding:14px 16px}
+.wrap{max-width:1000px;margin:0 auto}
+.top{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+h1{margin:0;font-size:22px;letter-spacing:-.5px}
+h1 span{color:var(--accent)}
+.sbox{flex:1;min-width:220px;display:flex;gap:8px}
+.search{flex:1;min-width:0;padding:10px 14px;border-radius:999px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:15px}
+.ctrl{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--muted)}
+input[type=range]{accent-color:var(--accent);width:90px}
+.stop{border:0;background:var(--accent);color:var(--accent-text);padding:9px 14px;border-radius:999px;font-weight:600;cursor:pointer}
+.chips{display:flex;gap:8px;overflow-x:auto;padding-top:12px;scrollbar-width:none}
+.chip{flex:none;border:1px solid var(--border);background:var(--surface);color:var(--text);padding:7px 14px;border-radius:999px;font-size:14px;cursor:pointer}
+.chip.on{background:var(--accent);color:var(--accent-text);border-color:var(--accent)}
+main{max-width:1000px;margin:0 auto;padding:18px 16px 40px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:12px}
+.card{position:relative}
+.btn{width:100%;aspect-ratio:1;border:0;border-radius:18px;color:#fff;font-weight:700;font-size:14px;cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;padding:10px;text-align:center;box-shadow:0 4px 0 rgba(0,0,0,.25);transition:transform .08s}
+.btn:active,.btn.play{transform:translateY(3px) scale(.97);box-shadow:0 1px 0 rgba(0,0,0,.25)}
+.btn .e{font-size:34px;line-height:1}
+.fav{position:absolute;top:6px;right:6px;border:0;background:rgba(0,0,0,.28);color:#fff;width:28px;height:28px;border-radius:50%;cursor:pointer;font-size:14px}
+.fav.on{color:#ffd54a}
+.empty{color:var(--muted);text-align:center;padding:40px 0}
+footer{color:var(--muted);font-size:12px;text-align:center;padding:0 16px 30px}
+</style>
+</head>
+<body>
+<header><div class="wrap">
+  <div class="top">
+    <h1>Beep<span>Box</span></h1>
+    <div class="sbox"><input class="search" id="q" type="search" placeholder="Search sounds…" aria-label="Search sounds"><button class="stop" id="go">🔍 Search</button></div>
+    <label class="ctrl">Vol <input type="range" id="vol" min="0" max="100" value="70"></label>
+    <button class="stop" id="stop">Stop all</button>
+    <button class="stop" id="add">⬆ Upload</button><input type="file" id="file" accept="audio/*" multiple hidden>
+  </div>
+  <div class="chips" id="chips"></div>
+</div></header>
+<main><div class="grid" id="grid"></div><div class="empty" id="empty" hidden>No sounds found.</div></main>
+<footer>All sounds are generated live in your browser. Tap a button to play.</footer>
+
+<script>
+let ctx, master, active = [];
+function init(){
+  if(ctx) { if(ctx.state==='suspended') ctx.resume(); return; }
+  ctx = new (window.AudioContext||window.webkitAudioContext)();
+  master = ctx.createGain(); master.gain.value = vol.value/100; master.connect(ctx.destination);
+}
+function tone(f1,f2,dur,type='sine',v=.5,when=0){
+  const t=ctx.currentTime+when, o=ctx.createOscillator(), g=ctx.createGain();
+  o.type=type; o.frequency.setValueAtTime(f1,t); o.frequency.exponentialRampToValueAtTime(Math.max(f2,1),t+dur);
+  g.gain.setValueAtTime(0.0001,t); g.gain.exponentialRampToValueAtTime(v,t+.01); g.gain.exponentialRampToValueAtTime(.0001,t+dur);
+  o.connect(g); g.connect(master); o.start(t); o.stop(t+dur+.02); active.push(o);
+}
+function noise(dur,freq=2000,v=.5,when=0,q=.7,type='lowpass'){
+  const t=ctx.currentTime+when, n=Math.floor(ctx.sampleRate*dur), b=ctx.createBuffer(1,n,ctx.sampleRate), d=b.getChannelData(0);
+  for(let i=0;i<n;i++) d[i]=Math.random()*2-1;
+  const s=ctx.createBufferSource(), f=ctx.createBiquadFilter(), g=ctx.createGain();
+  s.buffer=b; f.type=type; f.frequency.value=freq; f.Q.value=q;
+  g.gain.setValueAtTime(v,t); g.gain.exponentialRampToValueAtTime(.0001,t+dur);
+  s.connect(f); f.connect(g); g.connect(master); s.start(t); active.push(s);
+}
+function voice(f0a,f0b,dur,F0,F1,v=.5,when=0,vib=0){
+  const t=ctx.currentTime+when,o=ctx.createOscillator(),g=ctx.createGain();
+  o.type='sawtooth';o.frequency.setValueAtTime(f0a,t);o.frequency.linearRampToValueAtTime(f0b,t+dur);
+  if(vib){const l=ctx.createOscillator(),lg=ctx.createGain();l.frequency.value=5.5;lg.gain.value=vib;l.connect(lg);lg.connect(o.frequency);l.start(t);l.stop(t+dur+.1)}
+  g.gain.setValueAtTime(.0001,t);g.gain.exponentialRampToValueAtTime(v,t+.04);g.gain.setValueAtTime(v,t+dur*.7);g.gain.exponentialRampToValueAtTime(.0001,t+dur);
+  o.connect(g);
+  F0.forEach((f,i)=>{const b=ctx.createBiquadFilter(),m=ctx.createGain();b.type='bandpass';b.Q.value=[8,10,12][i];b.frequency.setValueAtTime(f,t);b.frequency.linearRampToValueAtTime(F1[i],t+dur*.35);m.gain.value=[1,.7,.4][i]*1.5;g.connect(b);b.connect(m);m.connect(master)});
+  o.start(t);o.stop(t+dur+.05);active.push(o);
+}
+const S = {
+  bruh(){tone(100,90,.05,'square',.3);voice(135,85,.7,[400,1100,1700],[650,1050,2500])},
+  fahhh(){noise(.18,6000,.35,0,.7,'highpass');voice(250,190,1.8,[700,1200,2600],[850,1250,2800],.5,.12,6)},
+  nooo(){voice(200,120,1.4,[300,800,2300],[500,850,2500],.5,0,5)},
+  oof(){noise(.05,500,.5);voice(150,100,.3,[500,900,2400],[550,950,2500])},
+  airhorn(){[0,.18].forEach(w=>{tone(440,430,.5,'sawtooth',.3,w);tone(554,545,.5,'sawtooth',.3,w);tone(659,650,.5,'sawtooth',.25,w)})},
+  laser(){tone(1800,150,.3,'sawtooth',.35)},
+  boing(){tone(200,700,.15,'sine',.6);tone(700,150,.5,'sine',.6,.15)},
+  coin(){tone(988,988,.08,'square',.25);tone(1319,1319,.35,'square',.25,.08)},
+  buzzer(){tone(110,105,.7,'sawtooth',.5);tone(116,110,.7,'square',.2)},
+  trombone(){[[311,.4],[294,.4],[277,.4]].forEach((n,i)=>tone(n[0],n[0],n[1],'sawtooth',.3,i*.42));tone(277,200,.9,'sawtooth',.3,1.26)},
+  rimshot(){noise(.12,1500,.6);tone(180,90,.15,'triangle',.6);noise(.1,5000,.5,.25,1,'highpass');noise(.4,6000,.5,.4,1,'highpass')},
+  ding(){tone(1568,1560,1.2,'sine',.5);tone(3136,3130,.6,'sine',.12)},
+  whoosh(){noise(.8,300,.7);const t=ctx.currentTime,f=ctx.createBiquadFilter()},
+  explosion(){noise(1.6,700,1);tone(120,25,1.2,'sine',.8)},
+  tada(){[523,659,784].forEach((f,i)=>tone(f,f,.15,'square',.2,i*.12));[523,659,784,1047].forEach(f=>tone(f,f,.8,'square',.15,.4))},
+  error(){tone(440,440,.12,'square',.3);tone(330,330,.3,'square',.3,.16)},
+  pop(){tone(900,200,.08,'sine',.8)},
+  siren(){for(let i=0;i<4;i++){tone(600,1000,.4,'sine',.4,i*.8);tone(1000,600,.4,'sine',.4,i*.8+.4)}},
+  kick(){tone(150,40,.35,'sine',1)},
+  snare(){noise(.2,3000,.7,0,.5,'highpass');tone(200,120,.1,'triangle',.5)},
+  applause(){for(let i=0;i<30;i++)noise(.08,2500+Math.random()*3000,.3,i*.07+Math.random()*.05,1,'bandpass')},
+  sparkle(){[1568,1976,2349,2637,3136,3951].forEach((f,i)=>tone(f,f,.25,'sine',.2,i*.07))},
+  drumroll(){for(let i=0;i<40;i++)noise(.05,2500,.25+i*.012,i*.045,.5,'highpass');noise(.5,1200,.8,1.9)},
+  heartbeat(){[0,.25,1,1.25].forEach(w=>{tone(70,45,.18,'sine',.9,w)})},
+  phone(){for(let i=0;i<6;i++){tone(1400,1400,.06,'square',.15,i*.12);tone(1800,1800,.06,'square',.15,i*.12+.06)}},
+  levelup(){[392,494,587,784,988,1175].forEach((f,i)=>tone(f,f,.14,'square',.2,i*.09))},
+  cricket(){for(let i=0;i<8;i++)tone(4200,4300,.05,'sine',.12,i*.07)},
+  bubble(){tone(300,900,.12,'sine',.5);tone(500,1200,.1,'sine',.4,.15)},
+  fail(){tone(392,392,.2,'triangle',.5);tone(330,330,.2,'triangle',.5,.22);tone(262,262,.5,'triangle',.5,.44)}
+};
+const SOUNDS=[
+ ['bruh','Bruh','😑','Memes','#6d4c41'],['fahhh','Fahhh','😩','Memes','#ad1457'],
+ ['nooo','Noooo','😭','Memes','#37474f'],['oof','Oof','🤕','Memes','#ef6c00'],
+ ['airhorn','Air Horn','📯','Memes','#e0453a'],['trombone','Sad Trombone','🎺','Funny','#8a5a2b'],
+ ['rimshot','Rimshot','🥁','Funny','#d9822b'],['boing','Boing','🪀','Funny','#2c9f6b'],
+ ['buzzer','Wrong Buzzer','❌','Memes','#c62f55'],['tada','Ta-da!','🎉','Memes','#8e44ad'],
+ ['fail','Fail','🙈','Memes','#5d6d7e'],['cricket','Crickets','🦗','Memes','#3d7a3d'],
+ ['heartbeat','Heartbeat','💓','Memes','#b03060'],['coin','Coin','🪙','Game','#d4a017'],
+ ['levelup','Level Up','⬆️','Game','#2874a6'],['laser','Laser','🔫','Game','#16a085'],
+ ['error','Error','⚠️','Game','#cb4335'],['bubble','Bubble','🫧','Game','#2e86c1'],
+ ['explosion','Explosion','💥','Effects','#e67e22'],['whoosh','Whoosh','💨','Effects','#5b7fa6'],
+ ['siren','Siren','🚨','Effects','#c0392b'],['phone','Phone Ring','📞','Effects','#7d3c98'],
+ ['pop','Pop','🎈','Effects','#d35fa0'],['sparkle','Sparkle','✨','Effects','#9b59b6'],
+ ['ding','Ding','🔔','Effects','#b7950b'],['kick','Kick Drum','🦶','Music','#34495e'],
+ ['snare','Snare','🪘','Music','#af601a'],['drumroll','Drum Roll','🎶','Music','#117864'],
+ ['applause','Applause','👏','Music','#ca6f1e']
+];
+const CATS=['All','Favorites','Mine','Memes','Game','Funny','Effects','Music'];
+const CUSTOM={};
+let cat='All', favs=[];
+try{favs=JSON.parse(localStorage.getItem('beepbox-favs')||'[]')}catch(e){}
+function saveFavs(){try{localStorage.setItem('beepbox-favs',JSON.stringify(favs))}catch(e){}}
+function play(id,el){
+  init();
+  if(CUSTOM[id]){const s=ctx.createBufferSource();s.buffer=CUSTOM[id];s.connect(master);s.start();active.push(s)} else S[id]();
+  if(el){el.classList.add('play');setTimeout(()=>el.classList.remove('play'),150)}
+}
+function render(){
+  const term=q.value.trim().toLowerCase(); grid.innerHTML='';
+  const list=SOUNDS.filter(s=>(cat==='All'||(cat==='Favorites'?favs.includes(s[0]):s[3]===cat))&&s[1].toLowerCase().includes(term));
+  empty.hidden=list.length>0;
+  list.forEach(s=>{
+    const c=document.createElement('div');c.className='card';
+    c.innerHTML=`<button class="btn" style="background:${s[4]}"><span class="e">${s[2]}</span>${s[1]}</button><button class="fav ${favs.includes(s[0])?'on':''}" aria-label="Favorite">★</button>`;
+    const b=c.firstChild; b.onclick=()=>play(s[0],b);
+    c.lastChild.onclick=e=>{favs=favs.includes(s[0])?favs.filter(x=>x!==s[0]):[...favs,s[0]];saveFavs();render()};
+    grid.appendChild(c);
+  });
+}
+function chips(){
+  document.getElementById('chips').innerHTML='';
+  CATS.forEach(c=>{const b=document.createElement('button');b.className='chip'+(c===cat?' on':'');b.textContent=c;
+    b.onclick=()=>{cat=c;chips();render()};document.getElementById('chips').appendChild(b)});
+}
+const q=document.getElementById('q'),grid=document.getElementById('grid'),empty=document.getElementById('empty'),vol=document.getElementById('vol');
+q.oninput=render;document.getElementById('go').onclick=()=>{cat='All';chips();render();q.focus()};q.onkeydown=e=>{if(e.key==='Enter'){cat='All';chips();render()}};
+vol.oninput=()=>{if(master)master.gain.value=vol.value/100};
+document.getElementById('stop').onclick=()=>{active.forEach(n=>{try{n.stop()}catch(e){}});active=[]};
+function idb(){return new Promise((res,rej)=>{const r=indexedDB.open('beepbox',1);r.onupgradeneeded=()=>r.result.createObjectStore('s',{keyPath:'id'});r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)})}
+async function addClip(c){try{init();CUSTOM[c.id]=await ctx.decodeAudioData(c.data.slice(0));SOUNDS.push([c.id,c.name,'🎤','Mine','#546e7a']);return true}catch(e){return false}}
+async function loadClips(){try{const d=await idb(),req=d.transaction('s').objectStore('s').getAll();req.onsuccess=async()=>{for(const c of req.result)await addClip(c);render()}}catch(e){}}
+const file=document.getElementById('file');
+document.getElementById('add').onclick=()=>file.click();
+file.onchange=async()=>{for(const f of [...file.files]){await one(f)}file.value=''};
+async function one(f){const c={id:'c'+Date.now()+Math.random().toString(36).slice(2,5),name:f.name.replace(/\.[^.]+$/,'').slice(0,18),data:await f.arrayBuffer()};
+  if(await addClip(c)){try{(await idb()).transaction('s','readwrite').objectStore('s').put(c)}catch(e){}cat='Mine';chips();render()}else alert('Could not read '+f.name+'.')}
+chips();render();loadClips();
+</script>
+</body>
+</html>
